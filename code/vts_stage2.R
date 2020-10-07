@@ -843,24 +843,36 @@ dates$date <- do.call(paste, list(dates$m, dates$d, dates$y))
 dates$date <- as.Date(dates$date, format=c("%m %d %Y"))
 dates$julian_date <- as.numeric(dates$date) + 2440588
 dates$modified_julian_date <- floor(dates$julian_date-2400000.5)
-dates$modified_julian_date <- dates$modified_julian_date+0.17 
+dates$modified_julian_date <- dates$modified_julian_date+0.5 
+#### Grid time ID ####
+yrs<-2006:2017
+dates<-as.data.frame(matrix(NA,length(yrs)*3,3))
+colnames(dates)<-c('y','m','d')
+dates$y <- rep(yrs, each=3)
+dates$d<-rep(16,length(yrs))
+dates$m<-rep(c(6,7,8),length(yrs))
+dates$date <- do.call(paste, list(dates$m, dates$d, dates$y))
+dates$date <- as.Date(dates$date, format=c("%m %d %Y"))
+dates$julian_date <- as.numeric(dates$date) + 2440588
+dates$modified_julian_date <- floor(dates$julian_date-2400000.5)
+dates$modified_julian_date <- dates$modified_julian_date+0.5 
 #### Download FVCOM time ID ####
-fvcom_data <-as.data.frame(read.csv("http://www.smast.umassd.edu:8080/thredds/dodsC/fvcom/hindcasts/30yr_gom3.ascii?time[0:1:342347]"))
-fvcom_time <- as.data.frame(fvcom_data$Dataset..[5:nrow(fvcom_data)])
-names(fvcom_time) <-"modified_julian_date"
-fvcom_time$modified_julian_date <- as.numeric(as.character(fvcom_time$modified_julian_date))
-fvcom_time$id <- 0:(nrow(fvcom_time)-1)
-
-#### Match time ####
 time_id <- c()
-for(i in 1:nrow(dates)){
-  temp <- fvcom_time$id[which(round(fvcom_time$modified_julian_date,2)==round(dates$modified_julian_date[i],2))]
-  if(length(temp)==0) time_id[i] <- NA
-  else time_id[i] <- temp
+for (i in 1:nrow(dates)){
+    fvcom_data <-as.data.frame(read.csv(paste("http://www.smast.umassd.edu:8080/thredds/dodsC/models/fvcom/NECOFS/Archive/Seaplan_33_Hindcast_v1/gom3_", dates$y[i], "0", dates$m[i], ".nc.ascii?time[0:1:700]", sep="")))
+    temp <- as.data.frame(fvcom_data$Dataset..[5:nrow(fvcom_data)])
+    names(temp) <-"modified_julian_date"
+    temp$modified_julian_date <- as.numeric(as.character(temp$modified_julian_date))
+    temp$id <- 0:(nrow(temp)-1)
+    if(length(temp)==0) {
+        time_id[i] <- NA
+    } else {
+        time_id[i] <- temp$id[temp$modified_julian_date==dates$modified_julian_date[i]]
+    }
 }
 #### Download FVCOM location data ####
-lat <- read.csv("http://www.smast.umassd.edu:8080/thredds/dodsC/fvcom/hindcasts/30yr_gom3.ascii?lat[0:1:48450]")
-lon <- read.csv("http://www.smast.umassd.edu:8080/thredds/dodsC/fvcom/hindcasts/30yr_gom3.ascii?lon[0:1:48450]")
+lat <- read.csv("http://www.smast.umassd.edu:8080/thredds/dodsC/models/fvcom/NECOFS/Archive/Seaplan_33_Hindcast_v1/gom3_200606.nc.ascii?lat[0:1:48450]")
+lon <- read.csv("http://www.smast.umassd.edu:8080/thredds/dodsC/models/fvcom/NECOFS/Archive/Seaplan_33_Hindcast_v1/gom3_200606.nc.ascii?lat[0:1:48450]")
 names(lat) <- "lat"
 names(lon) <- "lon"
 
@@ -880,11 +892,11 @@ grid <- disaggregate(grid)
 
 boundary_polygon = list()
 for(i in 1:length(grid@polygons)){
-  boundary <- grid@polygons[[i]]@Polygons[[1]]@coords
-  colnames(boundary) <- c("lon", "lat")
-  boundary_polygon[[i]] <- Polygon(boundary)
-  boundary_list <- Polygons(boundary_polygon, paste("boundary",i))
-  boundary_line <- SpatialPolygons(list(boundary_list))
+    boundary <- grid@polygons[[i]]@Polygons[[1]]@coords
+    colnames(boundary) <- c("lon", "lat")
+    boundary_polygon[[i]] <- Polygon(boundary)
+    boundary_list <- Polygons(boundary_polygon, paste("boundary",i))
+    boundary_line <- SpatialPolygons(list(boundary_list))
 }
 #plot(boundary_line, axes=T)
 gom_grid=crop(my_mesh, boundary_line)
@@ -898,65 +910,65 @@ grid_data <- grid_data[which(grid_data$lat>42.9),]
 
 #### Download grid depth/temperature/salinity data####
 if(FALSE){
-  #### Download depth data ####
-  depth_raster <- raster("./data/gis/ne_atl_crm_v1.asc")
-  sub_depth_raster <- crop(depth_raster, gom_grid)
-  grid_data$depth <- extract.data(grid_data, sub_depth_raster)
-  grid_data$fathom <- grid_data$depth/1.8288
-  write.csv(grid_data, file="./output/grid_depth_data.csv")
-  
-  #### Download temperature data ####
-  temperature_fvcom_data<-list()
-  for (i in 1:length(time_id)){
-    print(i)
-    temp_data <- read.csv(paste("http://www.smast.umassd.edu:8080/thredds/dodsC/fvcom/hindcasts/30yr_gom3.ascii?temp[", time_id[i], ":1:", time_id[i], "][44:1:44][0:1:48450]", sep=""))
-    temp_data <- as.numeric(as.character(temp_data[(6: nrow(temp_data)),1]))
-    temperature_fvcom_data[[i]] <- cbind(longitude, latitude, temp_data)
-    colnames(temperature_fvcom_data[[i]]) <- c("lon", "lat", "temperature")
-  }
-  save(temperature_fvcom_data, file="./data/temperature_data.RData")
-  
-  load("./data/temperature_data.RData")
-  temperature_raster_data <- list()
-  grid_data <-as.data.frame(gom_grid@coords)
-  colnames(grid_data) <-c("lon", "lat")
-  grid_data <- grid_data[which(grid_data$lat>42.9),]
-  for(i in 1:length(time_id)){
-    print(i)
-    temp_data <- as.data.frame(temperature_fvcom_data[[i]])
-    rast_col <- ceiling((range(temp_data$lon)[2]-range(temp_data$lon)[1])/0.01)
-    rast_row <- ceiling((range(temp_data$lat)[2]-range(temp_data$lat)[1])/0.01)
-    akima.smooth <- with(temp_data, interp(lon, lat, temperature, nx=rast_col, ny=rast_row))
-    rast <- raster(akima.smooth)
-    temperature_raster_data[[i]] <- extract.data(grid_data, rast)
-  }
-  save(temperature_raster_data, file="./output/temperature_raster_data.RData")
-  #### Download salinity data ####
-  salinity_fvcom_data<-list()
-  for (i in 1:length(time_id)){
-    print(i)
-    temp_data <- read.csv(paste("http://www.smast.umassd.edu:8080/thredds/dodsC/fvcom/hindcasts/30yr_gom3.ascii?salinity[", time_id[i], ":1:", time_id[i], "][44:1:44][0:1:48450]", sep=""))
-    temp_data <- as.numeric(as.character(temp_data[(6: nrow(temp_data)),1]))
-    salinity_fvcom_data[[i]] <- cbind(longitude, latitude, temp_data)
-    colnames(salinity_fvcom_data[[i]]) <- c("lon", "lat", "salinity")
-  }
-  save(salinity_fvcom_data, file="./data/salinity_data.RData")
-  
-  load("./data/salinity_data.RData")
-  salinity_raster_data <- list()
-  grid_data <-as.data.frame(gom_grid@coords)
-  colnames(grid_data) <-c("lon", "lat")
-  grid_data <- grid_data[which(grid_data$lat>42.9),]
-  for(i in 1:length(time_id)){
-    print(i)
-    temp_data <- as.data.frame(salinity_fvcom_data[[i]])
-    rast_col <- ceiling((range(temp_data$lon)[2]-range(temp_data$lon)[1])/0.01)
-    rast_row <- ceiling((range(temp_data$lat)[2]-range(temp_data$lat)[1])/0.01)
-    akima.smooth <- with(temp_data, interp(lon, lat, salinity, nx=rast_col, ny=rast_row))
-    rast <- raster(akima.smooth)
-    salinity_raster_data[[i]] <- extract.data(grid_data, rast)
-  }
-  save(salinity_raster_data, file="./output/salinity_raster_data.RData")
+    #### Download depth data ####
+    depth_raster <- raster("./data/gis/ne_atl_crm_v1.asc")
+    sub_depth_raster <- crop(depth_raster, gom_grid)
+    grid_data$depth <- extract.data(grid_data, sub_depth_raster)
+    grid_data$fathom <- grid_data$depth/1.8288
+    write.csv(grid_data, file="./output/grid_depth_data.csv")
+    
+    #### Download temperature data ####
+    temperature_fvcom_data<-list()
+    for (i in 1:length(time_id)){
+        print(i)
+        temp_data <- read.csv(paste("http://www.smast.umassd.edu:8080/thredds/dodsC/models/fvcom/NECOFS/Archive/Seaplan_33_Hindcast_v1/gom3_", dates$y[i], "0", dates$m[i], ".nc.ascii?temp[", time_id[i], ":1:", time_id[i], "][44:1:44][0:1:48450]", sep=""))
+        temp_data <- as.numeric(as.character(temp_data[(6: nrow(temp_data)),1]))
+        temperature_fvcom_data[[i]] <- cbind(longitude, latitude, temp_data)
+        colnames(temperature_fvcom_data[[i]]) <- c("lon", "lat", "temperature")
+    }
+    save(temperature_fvcom_data, file="./data/temperature_data.RData")
+    
+    load("./data/temperature_data.RData")
+    temperature_raster_data <- list()
+    grid_data <-as.data.frame(gom_grid@coords)
+    colnames(grid_data) <-c("lon", "lat")
+    grid_data <- grid_data[which(grid_data$lat>42.9),]
+    for(i in 1:length(time_id)){
+        print(i)
+        temp_data <- as.data.frame(temperature_fvcom_data[[i]])
+        rast_col <- ceiling((range(temp_data$lon)[2]-range(temp_data$lon)[1])/0.01)
+        rast_row <- ceiling((range(temp_data$lat)[2]-range(temp_data$lat)[1])/0.01)
+        akima.smooth <- with(temp_data, interp(lon, lat, temperature, nx=rast_col, ny=rast_row))
+        rast <- raster(akima.smooth)
+        temperature_raster_data[[i]] <- extract.data(grid_data, rast)
+    }
+    save(temperature_raster_data, file="./output/temperature_raster_data.RData")
+    #### Download salinity data ####
+    salinity_fvcom_data<-list()
+    for (i in 1:length(time_id)){
+        print(i)
+        temp_data <- read.csv(paste("http://www.smast.umassd.edu:8080/thredds/dodsC/models/fvcom/NECOFS/Archive/Seaplan_33_Hindcast_v1/gom3_", dates$y[i], "0", dates$m[i], ".nc.ascii?salinity[", time_id[i], ":1:", time_id[i], "][44:1:44][0:1:48450]", sep=""))
+        temp_data <- as.numeric(as.character(temp_data[(6: nrow(temp_data)),1]))
+        salinity_fvcom_data[[i]] <- cbind(longitude, latitude, temp_data)
+        colnames(salinity_fvcom_data[[i]]) <- c("lon", "lat", "salinity")
+    }
+    save(salinity_fvcom_data, file="./data/salinity_data.RData")
+    
+    load("./data/salinity_data.RData")
+    salinity_raster_data <- list()
+    grid_data <-as.data.frame(gom_grid@coords)
+    colnames(grid_data) <-c("lon", "lat")
+    grid_data <- grid_data[which(grid_data$lat>42.9),]
+    for(i in 1:length(time_id)){
+        print(i)
+        temp_data <- as.data.frame(salinity_fvcom_data[[i]])
+        rast_col <- ceiling((range(temp_data$lon)[2]-range(temp_data$lon)[1])/0.01)
+        rast_row <- ceiling((range(temp_data$lat)[2]-range(temp_data$lat)[1])/0.01)
+        akima.smooth <- with(temp_data, interp(lon, lat, salinity, nx=rast_col, ny=rast_row))
+        rast <- raster(akima.smooth)
+        salinity_raster_data[[i]] <- extract.data(grid_data, rast)
+    }
+    save(salinity_raster_data, file="./output/salinity_raster_data.RData")
 }
 #### Plot depth grid map ####
 grid_data <- read.csv(file="./output/grid_depth_data.csv")
@@ -1039,8 +1051,8 @@ for(i in 1:length(temperature_raster_data)){
     if (i%%6 == 0) axis(4, cex=0.5)
   }
   
-  if (i == 16) mtext("Latitude (°)", side=2, line=2.2)
-  if (i == 32) mtext("Longitude (°)", side=1, line=2.2)
+  if (i == 16) mtext("Latitude (Â°)", side=2, line=2.2)
+  if (i == 32) mtext("Longitude (Â°)", side=1, line=2.2)
 }
 
 par(mar=c(0.5,0.5,0.5,0.5))
@@ -1048,7 +1060,7 @@ plot.new()
 
 par(mar=c(0.1,2,0.1,0.1))
 plot.new()
-legend("left", legend=c(names(attr(colcode, "table"))), fill=c(attr(colcode, "palette")), cex=0.7, bty="n", title="Temperature (°C)")
+legend("left", legend=c(names(attr(colcode, "table"))), fill=c(attr(colcode, "palette")), cex=0.7, bty="n", title="Temperature (Â°C)")
 dev.off()
 
 #### Plot salinity grid map ####
@@ -1095,8 +1107,8 @@ for(i in 1:length(salinity_raster_data)){
     if (i%%6 == 0) axis(4, cex=0.5)
   }
   
-  if (i == 16) mtext("Latitude (°)", side=2, line=2.2)
-  if (i == 32) mtext("Longitude (°)", side=1, line=2.2)
+  if (i == 16) mtext("Latitude (Â°)", side=2, line=2.2)
+  if (i == 32) mtext("Longitude (Â°)", side=1, line=2.2)
 }
 
 par(mar=c(0.5,0.5,0.5,0.5))
@@ -2438,13 +2450,13 @@ if (FALSE){
 } #### catchability with month, statistical area, and depth
 
 if (FALSE){
-  #nao_temperature <- nao_temperature[which(nao_temperature$ï..Year>2005 & nao_temperature$ï..Year<2017),c("ï..Year","Jun", "Jul", "Aug")]
+  #nao_temperature <- nao_temperature[which(nao_temperature$Ã¯..Year>2005 & nao_temperature$Ã¯..Year<2017),c("Ã¯..Year","Jun", "Jul", "Aug")]
   nao_temperature_point <- c()
   for(i in 1:nrow(vts_vtrap_data)){
-    if(vts_vtrap_data$month[i]==6) nao_temperature_point[i] <- nao_temperature[which(nao_temperature$ï..Year==vts_vtrap_data$year[i]),"Jun"]
-    if(vts_vtrap_data$month[i]==7) nao_temperature_point[i] <- nao_temperature[which(nao_temperature$ï..Year==vts_vtrap_data$year[i]),"Jul"]
-    if(vts_vtrap_data$month[i]==8) nao_temperature_point[i] <- nao_temperature[which(nao_temperature$ï..Year==vts_vtrap_data$year[i]),"Aug"]
-    if(vts_vtrap_data$month[i]==9) nao_temperature_point[i] <- nao_temperature[which(nao_temperature$ï..Year==vts_vtrap_data$year[i]),"Aug"]
+    if(vts_vtrap_data$month[i]==6) nao_temperature_point[i] <- nao_temperature[which(nao_temperature$Ã¯..Year==vts_vtrap_data$year[i]),"Jun"]
+    if(vts_vtrap_data$month[i]==7) nao_temperature_point[i] <- nao_temperature[which(nao_temperature$Ã¯..Year==vts_vtrap_data$year[i]),"Jul"]
+    if(vts_vtrap_data$month[i]==8) nao_temperature_point[i] <- nao_temperature[which(nao_temperature$Ã¯..Year==vts_vtrap_data$year[i]),"Aug"]
+    if(vts_vtrap_data$month[i]==9) nao_temperature_point[i] <- nao_temperature[which(nao_temperature$Ã¯..Year==vts_vtrap_data$year[i]),"Aug"]
   }
   vts_vtrap_data$temperature <- nao_temperature_point
   vts_vtrap_data$catchability<- vts_vtrap_data$quantity/vts_vtrap_data$sim_quantity
